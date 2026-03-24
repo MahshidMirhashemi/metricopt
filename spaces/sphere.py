@@ -1,4 +1,6 @@
 import numpy as np
+import matplotlib.pyplot as plt
+
 
 
 class Sphere:
@@ -6,7 +8,8 @@ class Sphere:
         self.dimension = dimension
         self.metric = metric
 
-    def _project_to(self, X, zero_tol=1e-8):
+
+    def _project_to(self, X, zero_tol=1e-16):
         """
         Project a vector or batch of vectors onto the unit sphere.
         X: shape (d,) or (n, d)
@@ -25,120 +28,12 @@ class Sphere:
         else:
             raise ValueError("X must be 1D or 2D array.")
 
-    def sample(
-        self,
-        n_samples,
-        seed=None,
-        dtype=np.float64,
-        zero_tol=1e-8,
-        distribution="uniform",
-        mu=None,
-        kappa=20):
-        """
-        Sample n_samples points on the unit sphere S^{d-1}.
 
-        Parameters
-        ----------
-        n_samples : int
-            Number of samples.
-        seed : int or None
-            Random seed.
-        dtype : np.dtype
-            Data type for the samples.
-        zero_tol : float
-            Tolerance for norm checks in projection.
-        distribution : {"uniform", "vmf"}
-            - "uniform": uniform distribution on the sphere
-            - "vmf": von Mises-Fisher distribution with mean direction mu and concentration kappa
-        mu : array-like, shape (d,), required if distribution == "vmf"
-            Mean direction for vMF (will be normalized).
-        kappa : float
-            Concentration parameter for vMF. kappa = 0 -> uniform.
-
-        Returns
-        -------
-        X : ndarray, shape (n_samples, d)
-            Points on the unit sphere.
-        """
-        mu = np.zeros(self.dimension)
-        mu[-1] = 1.0
-        rng = np.random.default_rng(seed)
-        d = self.dimension
-
-        distribution = distribution.lower()
-        if distribution == "uniform":
-            X = rng.standard_normal((n_samples, d), dtype=dtype)
-            X = self._project_to(X, zero_tol=zero_tol)
-            return X
-
-        elif distribution == "vmf":
-            if mu is None:
-                raise ValueError("mu must be provided for von Mises-Fisher sampling.")
-            mu = np.asarray(mu, dtype=float)
-            if mu.shape != (d,):
-                raise ValueError(f"mu must have shape ({d},), got {mu.shape}.")
-            # normalize mu
-            mu_norm = np.linalg.norm(mu)
-            if mu_norm < zero_tol:
-                raise ValueError("mu must be non-zero.")
-            mu = mu / mu_norm
-
-            if kappa < 0:
-                raise ValueError("kappa must be >= 0.")
-
-            # special case: kappa == 0 -> uniform
-            if kappa == 0:
-                X = rng.standard_normal((n_samples, d), dtype=dtype)
-                X = self._project_to(X, zero_tol=zero_tol)
-                return X
-
-            # ---- Wood's algorithm for vMF on S^{d-1} ----
-            def _sample_w():
-                b = (-2 * kappa + np.sqrt(4 * kappa**2 + (d - 1)**2)) / (d - 1)
-                x0 = (1 - b) / (1 + b)
-                c = kappa * x0 + (d - 1) * np.log(1 - x0**2)
-
-                while True:
-                    z = rng.beta((d - 1) / 2.0, (d - 1) / 2.0)
-                    w = (1 - (1 + b) * z) / (1 - (1 - b) * z)
-                    u = rng.uniform()
-                    lhs = kappa * w + (d - 1) * np.log(1 - x0 * w)
-                    if lhs - c >= np.log(u):
-                        return w
-
-            X = np.zeros((n_samples, d), dtype=float)
-            e_d = np.zeros(d)
-            e_d[-1] = 1.0
-
-            for i in range(n_samples):
-                w = _sample_w()
-                # sample v ~ uniform on S^{d-2}
-                v = rng.standard_normal(d - 1)
-                v /= np.linalg.norm(v)
-
-                x_ = np.zeros(d)
-                x_[-1] = w
-                factor = np.sqrt(1 - w**2)
-                x_[:-1] = factor * v
-
-                # rotate north pole e_d to mu via Householder
-                if np.allclose(mu, e_d):
-                    X[i] = x_
-                else:
-                    u = e_d - mu
-                    u /= np.linalg.norm(u)
-                    H = np.eye(d) - 2 * np.outer(u, u)
-                    X[i] = H @ x_
-
-            return X.astype(dtype)
-
-        else:
-            raise ValueError(f"Unknown distribution: {distribution!r}")
 
     """
     def sample(self, n_samples, seed=None, dtype=np.float64, zero_tol=1e-8):
         
-        #Sample n_samples points uniformly on the unit sphere S^{d-1}.
+        #Sample n_samples points on the unit sphere S^{d-1}.
         #Returns: array of shape (n_samples, d)
         
         rng = np.random.default_rng(seed)
@@ -147,15 +42,9 @@ class Sphere:
         return X
     """
 
-    def set_metric(self, Metric):
-        metric = Metric.lower()
-        if metric not in {"euclidean", "spherical"}:
-            raise ValueError(f"Unknown metric: {Metric}")
-        self.metric = metric
-
     def dist(self, S1, S2):
         """
-        Distance between two SPD matrices under chosen metric.
+        Distance between two points on a sphere under chosen metric.
 
         For metric == "Spherical":
             d(S1, S2) = arccos( <S1,S2> ), in radians
@@ -166,46 +55,238 @@ class Sphere:
         S2 = self._project_to(S2)
 
         if self.metric == 'spherical':
-            dot = float(np.dot(S1, S2))
-            dot = np.clip(dot, -1.0, 1.0)
-            return np.arccos(dot)
+            s = 0.5 * np.linalg.norm(S1 - S2)
+            s = np.clip(s, 0.0, 1.0)
+            return 2.0 * np.arcsin(s)
 
         elif self.metric == 'euclidean':
             return np.linalg.norm(S1 - S2)
 
         elif self.metric is None:     
-            raise ValueError("Metric is not set. Use set_metric('AIRM' or 'Euclidean') first.")
+            raise ValueError("Metric is not set. Use set_metric('spherical' or 'Euclidean') first.")
 
         else:
             raise ValueError(f"Unknown metric: {self.metric}")
-        
+
+       
+    # with sample diameter control
+    def sample(self, n_samples, seed=0, tol=1e-16, diam=None):
+        dim = self.dimension
+        rng = np.random.default_rng(seed)
+
+        def points_on_hemisphere(normal_vec, n_samples):
+            normal_vec /= np.linalg.norm(normal_vec) 
+            X = rng.normal(loc=normal_vec, size=(n_samples, dim)).astype(np.float64)
+            X /= np.linalg.norm(X, axis=1, keepdims=True)
+
+            # remove points on the boundary of the circle
+            dots = (X @ normal_vec).astype(np.float64)
+            bad = np.abs(dots) <= np.float64(tol)
+            while np.any(bad):
+                k = int(bad.sum())
+                X_new = rng.normal(size=(k, dim)).astype(np.float64)
+                X_new /= np.linalg.norm(X_new, axis=1, keepdims=True)
+                dots_new = X_new @ normal_vec
+                X[bad] = X_new
+                dots[bad] = dots_new
+                bad = np.abs(dots) <= np.float64(tol)
+
+            # fold into hemisphere
+            mask = dots < 0
+            X[mask] *= -1.0
+            return X
+
+        #normal_vec = rng.normal(loc=normal_vec, size=dim).astype(np.float64)
+        normal_vec = np.zeros(dim, dtype=np.float64)
+        normal_vec[-1] = 1.0
+        if diam is None:
+            return points_on_hemisphere(normal_vec, n_samples)
+            
+
+        else:
+            X = [points_on_hemisphere(normal_vec, 1)[0]] 
+
+            while len(X) < n_samples:
+                x_new = points_on_hemisphere(normal_vec, 1)[0] 
+                if all(self.dist(x_new, x) < diam for x in X):
+                    X.append(x_new)
+
+            return np.vstack(X).astype(np.float64)    
+
+    """  
+    # with Variance control 
+    def sample(self, n_samples, seed=0, tol=1e-16, scale=1.0):
+        dim = self.dimension
+        rng = np.random.default_rng(seed)
+        normal_vec = rng.normal(scale= scale, size=dim).astype(np.float64)
+        normal_vec /= np.linalg.norm(normal_vec) 
+        X = rng.normal(loc=normal_vec, scale= scale, size=(n_samples, dim)).astype(np.float64)
+        X /= np.linalg.norm(X, axis=1, keepdims=True)
+            
+        return np.vstack(X).astype(np.float64)    
+    
+    """  
+    def sample_sin(self, N, theta, r=1):
+        phis = np.random.rand(N)*2*np.pi
+        temp1 = np.random.rand(N**2)*theta
+        temp2 = np.random.rand(N**2)*theta
+        thetas = temp1[temp2<=np.sin(temp1)][:N]
+        x = r * np.sin(thetas) * np.cos(phis)
+        y = r * np.sin(thetas) * np.sin(phis)
+        z = r * np.cos(thetas)
+        #print(thetas.size)
+        #plt.hist(thetas, bins=100, alpha=0.3)
+        #plt.plot(np.linspace(0, theta, 1000), 6000*np.sin(np.linspace(0, theta, 1000)), color="red")
+        #plt.show()
+        return np.stack([x, y, z], axis=1)
+    
+    def sample_polar(self, n_samples, seed=0, diam=np.pi, r=1, dtype=np.float64):
+        dim = self.dimension
+        rng = np.random.default_rng(seed)
+        if diam > np.pi:
+            raise ValueError("diam must be less than pi")
+        if dim != 3:
+            raise ValueError("the algorithm only works for dim = 3 (for now!)")
+        else:
+            theta = rng.uniform(0.0, 2.0*np.pi, size=n_samples).astype(dtype)  
+            phi =  rng.uniform(0.0, 0.5*diam, size=n_samples).astype(dtype)  
+            x = r * np.sin(phi) * np.cos(theta)
+            y = r * np.sin(phi) * np.sin(theta)
+            z = r * np.cos(phi)       
 
 
-    def convex_combination(self, x, y, t: float):
+        return np.stack([x, y, z], axis=1).astype(dtype)
+ 
+
+
+
+
+    def set_metric(self, Metric):
+        metric = Metric.lower()
+        if metric not in {"euclidean", "spherical"}:
+            raise ValueError(f"Unknown metric: {Metric}")
+        self.metric = metric
+
+
+
+    def geodesic(self, x, y, t, List=False):
+        """
+        Geodesic between x and y on the sphere.
+
+        Modes
+        -----
+        1) List=False and t is a scalar in [0,1]:
+            returns g(t)
+
+        2) List=True:
+        - if t is an int n>=2: returns [g(0), g(1/(n-1)), ..., g(1)]
+        - if t is array-like of scalars: returns [g(t_i)] for each t_i
+
+        Metrics
+        -------
+        - Euclidean (projected): g(t) = proj((1-t)x + ty)
+        - Spherical (great-circle / SLERP):
+            Let theta = arccos(<x,y>).
+            g(t) = proj( sin((1-t)theta)/sin(theta) * x + sin(t theta)/sin(theta) * y )
+        """
         if self.metric is None:
-            raise ValueError("Metric is not set. Use set_metric('euclidean' or 'geodesic') first.")
+            raise ValueError("Metric is not set. Use set_metric('euclidean' or 'spherical') first.")
 
+        metric = str(self.metric).lower().strip()
+        if metric not in {"euclidean", "spherical"}:
+            raise ValueError(f"Unknown metric: {self.metric}")
+
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        if x.shape != y.shape:
+            raise ValueError("x and y must have the same shape.")
+
+        # Ensure points are on the sphere (your class already has this)
         x = self._project_to(x)
         y = self._project_to(y)
 
-        if self.metric == "euclidean":
-            z = (1.0 - t) * x + t * y
-            return self._project_to(z)
+        def g_at(tau: float):
+            if not np.isfinite(tau):
+                raise ValueError("t must be finite.")
+            if tau < 0.0 or tau > 1.0:
+                raise ValueError("t must be in [0,1].")
 
-        elif self.metric == "spherical":
+            if metric == "euclidean":
+                z = (1.0 - tau) * x + tau * y
+                return self._project_to(z)
+
+            # metric == "spherical" 
             dot = float(np.dot(x, y))
             dot = np.clip(dot, -1.0, 1.0)
             theta = np.arccos(dot)
 
+            # x and y almost identical -> geodesic is essentially constant
             if theta < 1e-8:
-                # x and y almost identical → fallback to x
                 return x.copy()
 
+            # x and y nearly antipodal: SLERP becomes numerically unstable / not unique
+            if np.pi - theta < 1e-16:
+                # pick a deterministic orthogonal direction and rotate
+                # (any great circle through x and -x is a geodesic; we choose one)
+                idx = int(np.argmax(np.abs(x)))
+                v = np.zeros_like(x)
+                v[(idx + 1) % x.size] = 1.0
+                u = v - np.dot(v, x) * x
+                nu = np.linalg.norm(u)
+                if nu < 1e-12:
+                    # fallback: return x (rare degeneracy)
+                    return x.copy()
+                u = u / nu
+                z = np.cos(np.pi * tau) * x + np.sin(np.pi * tau) * u
+                return self._project_to(z)
+
             sin_theta = np.sin(theta)
-            w1 = np.sin((1.0 - t) * theta) / sin_theta
-            w2 = np.sin(t * theta) / sin_theta
+            w1 = np.sin((1.0 - tau) * theta) / sin_theta
+            w2 = np.sin(tau * theta) / sin_theta
             z = w1 * x + w2 * y
             return self._project_to(z)
 
-        else:
-            raise ValueError(f"Unknown metric: {self.metric}")
+        # ---- dispatch
+        if List:
+            if isinstance(t, (int, np.integer)):
+                n = int(t)
+                if n < 2:
+                    raise ValueError("When List=True and t is int, it must be n>=2.")
+                taus = np.linspace(0.0, 1.0, n)
+                return [g_at(float(tau)) for tau in taus]
+
+            taus = np.asarray(t).ravel()
+            if taus.size == 0:
+                raise ValueError("Empty list/array of t values.")
+            return [g_at(float(tau)) for tau in taus]
+
+        # List=False
+        if t == 0:
+            return x
+        elif t == 1:
+            return y
+        if not np.isscalar(t):
+            raise ValueError("When List=False, t must be a scalar in [0,1].")
+        return g_at(float(t))
+    
+
+    def diameter(self,points):
+        """
+        points: list/array of sample points
+        returns: dmax, (i, j)
+        """
+        n = len(points)
+        if n < 2:
+            raise ValueError("Need at least 2 points to define a diameter.")
+
+        dmax = -np.inf
+        imax = jmax = None
+
+        for i in range(n - 1):
+            for j in range(i + 1, n):
+                d = float(self.dist(points[i], points[j]))
+                if d > dmax:
+                    dmax = d
+                    imax, jmax = i, j
+
+        return dmax, (imax, jmax)
