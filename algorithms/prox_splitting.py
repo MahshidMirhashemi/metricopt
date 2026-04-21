@@ -9,7 +9,6 @@ class Prox:
     def set_space(self, space):
         self.space = space
 
-
     def prox_mapping_dist(self, x, xi, lam=1):
         if self.space is None:
             raise ValueError("Space not set. Use set_space(...) first.")
@@ -28,7 +27,6 @@ class Prox:
             X_new.append(x)
         return X_new
     
-
     def relaxed_cyclic(self, x, X, tau= 0.5, lam=0.5):
         X_new = []
         for xi in X:
@@ -38,7 +36,6 @@ class Prox:
             X_new.append(x)
         return X_new
     
-
     def cycle_circumference(self, S):
         length = 0.0
         for i in range(len(S)-1):
@@ -49,10 +46,6 @@ class Prox:
 
         return length
     
-
-            
-
-
     def Frechet_mean(self, x0, X, method = "relaxed", 
                             tau=0.5, 
                             lam=0.5,  
