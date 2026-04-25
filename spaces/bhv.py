@@ -4,10 +4,10 @@ import numpy as np
 
 class BHVSpace:
 
-    def __init__(self, n_leaves):
+    def __init__(self, n_labels):
             
-            self.dimension = n_leaves
-            self.space = TreeSpace(n_leaves=self.dimension)
+            self.dimension = n_labels
+            self.space = TreeSpace(n_labels=self.dimension)
             self.metric = self.space.metric
 
     def sample(self, n_samples):
